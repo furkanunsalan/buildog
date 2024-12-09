@@ -4,7 +4,6 @@ interface ServiceClientConfig {
   serviceBaseUrl: string;
 }
 
-// ServiceClient Class
 class ServiceClient {
   private serviceBaseUrl: string;
   private authenticator: Authenticator;
@@ -25,6 +24,15 @@ class ServiceClient {
       if (!token) {
         throw new Error("User is not authenticated.");
       }
+
+      // Default headers
+      const defaultHeaders: { [key: string]: string } = {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      };
+
+      // Combine default headers with dynamic headers passed as argument
+      const finalHeaders = { ...defaultHeaders, ...headers };
 
       const options: RequestInit = {
         method,

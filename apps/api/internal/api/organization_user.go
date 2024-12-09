@@ -16,54 +16,49 @@ func (a *api) addUserToOrganization(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-
-	claims, ok := utils.GetTokenClaims(r)
-	if !ok {
-		utils.JSONError(w, http.StatusUnauthorized, "Token claims missing")
-		return
-	}
-
-	userID, ok := utils.GetUserIDFromClaims(claims)
-	if !ok {
-		utils.JSONError(w, http.StatusBadRequest, "Invalid user ID")
-		return
-	}
-
-	// check authorization for create user
 	organizationID := r.Header.Get("organization_id")
-	role, err := a.organizationUsersRepo.GetOrganizationUserRole(userID, organizationID)
+
+	user, err := a.userRepo.GetUserWithEmail(payload.Email)
 	if err != nil {
-		log.Printf("Error getting user: %v", err)
-		utils.JSONError(w, http.StatusInternalServerError, "Unauthoruized")
+		log.Printf("Error fetching user by email: %v", err)
+		utils.JSONError(w, http.StatusInternalServerError, "Failed to retrieve user")
 		return
 	}
 
-	if role == "admin" || role == "owner" {
-		user, err := a.userRepo.GetUserWithEmail(payload.Email)
-		if err != nil {
-			log.Printf("Error creating user: %v", err)
-			utils.JSONError(w, http.StatusInternalServerError, "No permission")
-			return
-		}
-
-		organization_user := &models.OrganizationUserCreated{
-			OrganizationId: organizationID,
-			UserId:         user.Id,
-			Role:           payload.Role,
-		}
-
-		create_organization_user, err := a.organizationUsersRepo.CreateOrganizationUser(organization_user)
-		if err != nil {
-			log.Printf("Error creating user: %v", err)
-			utils.JSONError(w, http.StatusInternalServerError, "Failed to create organization user")
-			return
-		}
-
-		utils.JSONResponse(w, http.StatusCreated, create_organization_user)
+	exists, err := a.organizationUsersRepo.IsUserInOrganization(organizationID, user.Id)
+	if err != nil {
+		log.Printf("Error checking if user is in organization: %v", err)
+		utils.JSONError(w, http.StatusInternalServerError, "Failed to check organization membership")
 		return
 	}
 
-	utils.JSONError(w, http.StatusInternalServerError, "Failed to create organization user")
+	if exists {
+		utils.JSONError(w, http.StatusConflict, "User is already a member of the organization")
+		return
+	}
+
+	organizationUser := &models.OrganizationUserCreated{
+		OrganizationId: organizationID,
+		UserId:         user.Id,
+		Role:           payload.Role,
+	}
+
+	createdOrganizationUser, err := a.organizationUsersRepo.CreateOrganizationUser(organizationUser)
+	if err != nil {
+		log.Printf("Error creating organization user: %v", err)
+		utils.JSONError(w, http.StatusInternalServerError, "Failed to create organization user")
+		return
+	}
+
+	response := map[string]interface{}{
+		"user_id":    createdOrganizationUser.UserId,
+		"email":      payload.Email,
+		"role":       payload.Role,
+		"first_name": user.FirstName,
+		"last_name":  user.LastName,
+	}
+
+	utils.JSONResponse(w, http.StatusCreated, response)
 }
 
 func (a *api) updateUserRoleInOrganization(w http.ResponseWriter, r *http.Request) {
@@ -82,22 +77,16 @@ func (a *api) updateUserRoleInOrganization(w http.ResponseWriter, r *http.Reques
 
 	currentUserID, ok := utils.GetUserIDFromClaims(claims)
 	if !ok {
-		utils.JSONError(w, http.StatusBadRequest, "Invalid user ID")
+		utils.JSONError(w, http.StatusBadRequest, "Invalid user ID in token")
+		return
+	}
+
+	if currentUserID == payload.UserID {
+		utils.JSONError(w, http.StatusForbidden, "You cannot change your own role")
 		return
 	}
 
 	organizationID := r.Header.Get("organization_id")
-	currentUserRole, err := a.organizationUsersRepo.GetOrganizationUserRole(currentUserID, organizationID)
-	if err != nil {
-		log.Printf("Error getting user role: %v", err)
-		utils.JSONError(w, http.StatusInternalServerError, "Unauthorized")
-		return
-	}
-
-	if currentUserRole != "admin" && currentUserRole != "owner" {
-		utils.JSONError(w, http.StatusForbidden, "Insufficient permissions to update user role")
-		return
-	}
 
 	err = a.organizationUsersRepo.UpdateOrganizationUserRole(organizationID, payload.UserID, payload.Role)
 	if err != nil {
@@ -129,22 +118,16 @@ func (a *api) deleteUserFromOrganization(w http.ResponseWriter, r *http.Request)
 
 	currentUserID, ok := utils.GetUserIDFromClaims(claims)
 	if !ok {
-		utils.JSONError(w, http.StatusBadRequest, "Invalid user ID")
+		utils.JSONError(w, http.StatusBadRequest, "Invalid user ID in token")
+		return
+	}
+
+	if currentUserID == payload.UserID {
+		utils.JSONError(w, http.StatusForbidden, "You cannot delete yourself from the organization")
 		return
 	}
 
 	organizationID := r.Header.Get("organization_id")
-	currentUserRole, err := a.organizationUsersRepo.GetOrganizationUserRole(currentUserID, organizationID)
-	if err != nil {
-		log.Printf("Error getting user role: %v", err)
-		utils.JSONError(w, http.StatusInternalServerError, "Unauthorized")
-		return
-	}
-
-	if currentUserRole != "admin" && currentUserRole != "owner" {
-		utils.JSONError(w, http.StatusForbidden, "Insufficient permissions to delete user from organization")
-		return
-	}
 
 	err = a.organizationUsersRepo.DeleteOrganizationUser(organizationID, payload.UserID)
 	if err != nil {
@@ -172,7 +155,6 @@ func (a *api) getOrganizationUserInfo(w http.ResponseWriter, r *http.Request) {
 
 	organizationID := r.Header.Get("organization_id")
 
-	
 	userInfo, err := a.organizationUsersRepo.GetOrganizationUserInfo(userID, organizationID)
 
 	if err != nil {
@@ -187,7 +169,6 @@ func (a *api) getOrganizationUserInfo(w http.ResponseWriter, r *http.Request) {
 
 	utils.JSONResponse(w, http.StatusOK, userInfo)
 }
-
 
 func (a *api) listOrganizationUsers(w http.ResponseWriter, r *http.Request) {
 	organizationID := r.Header.Get("organization_id")
@@ -210,4 +191,3 @@ func (a *api) listOrganizationUsers(w http.ResponseWriter, r *http.Request) {
 
 	utils.JSONResponse(w, http.StatusOK, users)
 }
-

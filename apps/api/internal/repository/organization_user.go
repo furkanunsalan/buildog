@@ -45,7 +45,7 @@ func (r *OrganizationUserRepository) CreateOrganizationUser(user *models.Organiz
 	return createdOrganizationUser, nil
 }
 
-func (r *OrganizationUserRepository) GetOrganizationUserRole( organization_id string,user_id string) (string, error) {
+func (r *OrganizationUserRepository) GetOrganizationUserRole(organization_id string, user_id string) (string, error) {
 	query := `
 		SELECT role FROM organization_users where organization_id = $1 and user_id = $2
 	`
@@ -87,10 +87,10 @@ func (r *OrganizationUserRepository) UpdateOrganizationUserRole(organizationID, 
 	return nil
 }
 
-
 func (e ErrOrganizationUserNotFound) Error() string {
 	return "no organization user found with organization_id " + e.OrganizationID + " and user_id " + e.UserID
 }
+
 // Add this custom error type at the end of the file
 type ErrOrganizationUserNotFound struct {
 	OrganizationID string
@@ -152,6 +152,7 @@ func (r *OrganizationUserRepository) GetOrganizationUserInfo(userID string, orga
 
 	return &userInfo, nil
 }
+
 // ListOrganizationUsers retrieves detailed information about all users in an organization
 func (r *OrganizationUserRepository) ListOrganizationUsers(organizationID string) ([]*models.OrganizationUserInfo, error) {
 	query := `
@@ -196,4 +197,20 @@ func (r *OrganizationUserRepository) ListOrganizationUsers(organizationID string
 	}
 
 	return users, nil
+}
+
+func (r *OrganizationUserRepository) IsUserInOrganization(organizationID, userID string) (bool, error) {
+	query := `
+		SELECT EXISTS (
+			SELECT 1 
+			FROM organization_users 
+			WHERE organization_id = $1 AND user_id = $2
+		)
+	`
+	var exists bool
+	err := r.db.QueryRow(query, organizationID, userID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
